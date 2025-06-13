@@ -71,7 +71,7 @@ function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
-    const newSocket = io('http://localhost:3001');
+    const newSocket = io('https://musicsync-e6za.onrender.com');
     setSocket(newSocket);
 
     newSocket.on('connect', () => {

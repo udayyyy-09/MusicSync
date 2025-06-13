@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: music-sync-server
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server/index.js
+    rootDir: server
+    envVars:
+      - key: NODE_ENV
+        value: production

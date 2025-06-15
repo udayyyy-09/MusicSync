@@ -62,6 +62,7 @@ function App() {
   const [songArtist, setSongArtist] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [audioFiles, setAudioFiles] = useState<Map<number, string>>(new Map());
   
@@ -71,15 +72,47 @@ function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
-    const newSocket = io('https://musicsync-e6za.onrender.com');
+    // Determine server URL based on environment
+    const getServerUrl = () => {
+      if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          return 'http://localhost:3001';
+        }
+      }
+      return 'https://musicsync-e6za.onrender.com';
+    };
+
+    const serverUrl = getServerUrl();
+    console.log('Connecting to server:', serverUrl);
+
+    const newSocket = io(serverUrl, {
+      transports: ['websocket', 'polling'],
+      timeout: 20000,
+      forceNew: true
+    });
+    
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
+      console.log('Connected to server');
       setIsConnected(true);
+      setConnectionError(null);
     });
 
-    newSocket.on('disconnect', () => {
+    newSocket.on('disconnect', (reason) => {
+      console.log('Disconnected from server:', reason);
       setIsConnected(false);
+      if (reason === 'io server disconnect') {
+        // Server disconnected, try to reconnect
+        newSocket.connect();
+      }
+    });
+
+    newSocket.on('connect_error', (error) => {
+      console.error('Connection error:', error);
+      setIsConnected(false);
+      setConnectionError('Failed to connect to server. Please try again.');
     });
 
     newSocket.on('room-created', (data) => {
@@ -336,8 +369,22 @@ useEffect(() => {
             </div>
             <h1 className="text-2xl font-bold text-white mb-2">MusicSync</h1>
             <p className="text-white/70">Share music and chat with friends</p>
-            {!isConnected && (
-              <div className="text-yellow-400 text-sm mt-2">Connecting to server...</div>
+            {!isConnected && !connectionError && (
+              <div className="text-yellow-400 text-sm mt-2 flex items-center justify-center gap-2">
+                <div className="w-4 h-4 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
+                Connecting to server...
+              </div>
+            )}
+            {connectionError && (
+              <div className="text-red-400 text-sm mt-2 p-2 bg-red-500/10 rounded-lg border border-red-500/20">
+                {connectionError}
+              </div>
+            )}
+            {isConnected && (
+              <div className="text-green-400 text-sm mt-2 flex items-center justify-center gap-2">
+                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                Connected
+              </div>
             )}
           </div>
 
@@ -437,9 +484,15 @@ useEffect(() => {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-white/70">
-              <Users className="w-4 h-4" />
-              <span className="text-sm">{room.users.length} online</span>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 text-white/70">
+                <Users className="w-4 h-4" />
+                <span className="text-sm">{room.users.length} online</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
+                <span className="text-white/70 text-sm">{isConnected ? 'Connected' : 'Disconnected'}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -490,10 +543,12 @@ useEffect(() => {
                     onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
                     placeholder="Type a message..."
                     className="w-full px-4 py-2 pr-12 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    disabled={!isConnected}
                   />
                   <button
                     onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-white/50 hover:text-white"
+                    disabled={!isConnected}
                   >
                     <Smile className="w-4 h-4" />
                   </button>
@@ -505,14 +560,13 @@ useEffect(() => {
                           setMessage(prev => prev + emoji.emoji);
                           setShowEmojiPicker(false);
                         }}
-                        // theme="dark"
                       />
                     </div>
                   )}
                 </div>
                 <button
                   onClick={sendMessage}
-                  disabled={!message.trim()}
+                  disabled={!message.trim() || !isConnected}
                   className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
                   <Send className="w-4 h-4" />
@@ -543,7 +597,8 @@ useEffect(() => {
                   <div className="flex items-center justify-center gap-4">
                     <button
                       onClick={toggleMusic}
-                      className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105"
+                      disabled={!isConnected}
+                      className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105 disabled:opacity-50"
                     >
                       {room.isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
                     </button>
@@ -576,6 +631,7 @@ useEffect(() => {
                   value={songTitle}
                   onChange={(e) => setSongTitle(e.target.value)}
                   className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+                  disabled={!isConnected}
                 />
                 <input
                   type="text"
@@ -583,6 +639,7 @@ useEffect(() => {
                   value={songArtist}
                   onChange={(e) => setSongArtist(e.target.value)}
                   className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+                  disabled={!isConnected}
                 />
                 <input
                   ref={fileInputRef}
@@ -594,7 +651,8 @@ useEffect(() => {
                 <div className="flex gap-2">
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className={`flex-1 px-3 py-2 border border-white/20 rounded-lg transition-all text-sm flex items-center justify-center gap-2 ${
+                    disabled={!isConnected}
+                    className={`flex-1 px-3 py-2 border border-white/20 rounded-lg transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-50 ${
                       selectedFile 
                         ? 'bg-green-500/20 text-green-300 border-green-500/50' 
                         : 'bg-white/10 text-white/70 hover:bg-white/20'
@@ -605,7 +663,7 @@ useEffect(() => {
                   </button>
                   <button
                     onClick={addSong}
-                    disabled={!songTitle.trim() || !selectedFile}
+                    disabled={!songTitle.trim() || !selectedFile || !isConnected}
                     className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     <Plus className="w-4 h-4" />

@@ -10,15 +10,53 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const server = createServer(app);
+
+// Configure CORS for both development and production
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'https://music-sync.vercel.app',
+  'https://musicsync-e6za.onrender.com'
+];
+
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        console.log('Blocked origin:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('Blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
 // Store rooms and users
 const rooms = new Map();
@@ -168,18 +206,6 @@ io.on('connection', (socket) => {
       
       room.playlist.push(song);
       io.to(user.roomCode).emit('playlist-updated', { playlist: room.playlist });
-      
-      // Send a chat message when a song is added
-      // const message = {
-      //   id: Date.now() + 1,
-      //   username: 'System',
-      //   avatar: '#6366F1',
-      //   text: `🎵 ${user.username} added "${song.title}" by ${song.artist} to the playlist`,
-      //   timestamp: new Date().toISOString()
-      // };
-      
-      // room.messages.push(message);
-      // io.to(user.roomCode).emit('new-message', { message });
     }
   });
 
@@ -198,21 +224,6 @@ io.on('connection', (socket) => {
         currentTime: room.currentTime,
         timestamp: Date.now()
       });
-      
-      // Send a chat message when music is played/paused (only for manual controls)
-      // if (data.isPlaying !== undefined && room.currentSong) {
-      //   const action = data.isPlaying ? 'started' : 'paused';
-      //   const message = {
-      //     id: Date.now(),
-      //     username: 'System',
-      //     avatar: '#6366F1',
-      //     text: `🎵 ${user.username} ${action} the music`,
-      //     timestamp: new Date().toISOString()
-      //   };
-        
-      //   room.messages.push(message);
-      //   io.to(user.roomCode).emit('new-message', { message });
-      // }
     }
   });
 
@@ -283,4 +294,5 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log('Allowed origins:', allowedOrigins);
 });

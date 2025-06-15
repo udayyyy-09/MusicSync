@@ -16,7 +16,8 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://music-sync.vercel.app',
-  'https://musicsync-e6za.onrender.com'
+  'https://musicsync-e6za.onrender.com',
+  'https://stirring-cobbler-39d9bd.netlify.app'
 ];
 
 const io = new Server(server, {
@@ -201,11 +202,24 @@ io.on('connection', (socket) => {
         artist: data.artist || 'Unknown Artist',
         duration: data.duration || '0:00',
         addedBy: user.username,
-        url: data.url
+        url: data.url,
+        audioData: data.audioData // Store base64 audio data
       };
       
       room.playlist.push(song);
       io.to(user.roomCode).emit('playlist-updated', { playlist: room.playlist });
+      
+      // Send a chat message when a song is added
+      const message = {
+        id: Date.now() + 1,
+        username: 'System',
+        avatar: '#6366F1',
+        text: `🎵 ${user.username} added "${song.title}" by ${song.artist} to the playlist`,
+        timestamp: new Date().toISOString()
+      };
+      
+      room.messages.push(message);
+      io.to(user.roomCode).emit('new-message', { message });
     }
   });
 
@@ -224,6 +238,29 @@ io.on('connection', (socket) => {
         currentTime: room.currentTime,
         timestamp: Date.now()
       });
+      
+      // Send a chat message when music is played/paused/stopped
+      if (data.isPlaying !== undefined && room.currentSong) {
+        let action;
+        if (data.isPlaying) {
+          action = 'started';
+        } else if (data.currentTime === 0) {
+          action = 'stopped';
+        } else {
+          action = 'paused';
+        }
+        
+        const message = {
+          id: Date.now(),
+          username: 'System',
+          avatar: '#6366F1',
+          text: `${action === 'stopped' ? '⏹️' : '🎵'} ${user.username} ${action} the music`,
+          timestamp: new Date().toISOString()
+        };
+        
+        room.messages.push(message);
+        io.to(user.roomCode).emit('new-message', { message });
+      }
     }
   });
 

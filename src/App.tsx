@@ -11,7 +11,8 @@ import {
   Copy,
   Check,
   Volume2,
-  Upload
+  Upload,
+  Square
 } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 
@@ -37,7 +38,7 @@ interface Song {
   duration: string;
   addedBy: string;
   url: string;
-  file?: File;
+  audioData?: string; // Base64 encoded audio data
 }
 
 interface Room {
@@ -64,7 +65,7 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [audioFiles, setAudioFiles] = useState<Map<number, string>>(new Map());
+  const [audioCache, setAudioCache] = useState<Map<number, string>>(new Map());
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
@@ -121,6 +122,13 @@ function App() {
 
     newSocket.on('room-joined', (data) => {
       setRoom(data.room);
+      // Cache audio data for existing songs
+      data.room.playlist.forEach((song: Song) => {
+        if (song.audioData && !audioCache.has(song.id)) {
+          const audioUrl = `data:audio/mpeg;base64,${song.audioData}`;
+          setAudioCache(prev => new Map(prev).set(song.id, audioUrl));
+        }
+      });
     });
 
     newSocket.on('room-error', (data) => {
@@ -168,6 +176,14 @@ function App() {
         ...prev,
         playlist: data.playlist
       } : null);
+      
+      // Cache audio data for new songs
+      data.playlist.forEach((song: Song) => {
+        if (song.audioData && !audioCache.has(song.id)) {
+          const audioUrl = `data:audio/mpeg;base64,${song.audioData}`;
+          setAudioCache(prev => new Map(prev).set(song.id, audioUrl));
+        }
+      });
     });
 
     newSocket.on('song-changed', (data) => {
@@ -185,6 +201,19 @@ function App() {
         isPlaying: data.isPlaying,
         currentTime: data.currentTime
       } : null);
+      
+      // Sync audio playback
+      if (audioRef.current && room?.currentSong) {
+        const audioUrl = audioCache.get(room.currentSong.id);
+        if (audioUrl) {
+          audioRef.current.currentTime = data.currentTime;
+          if (data.isPlaying) {
+            audioRef.current.play().catch(console.error);
+          } else {
+            audioRef.current.pause();
+          }
+        }
+      }
     });
 
     return () => {
@@ -196,46 +225,39 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [room?.messages]);
 
- // When current song changes
-useEffect(() => {
-  if (room?.currentSong && audioRef.current) {
-    const audioUrl = audioFiles.get(room.currentSong.id);
-    if (audioUrl) {
-      audioRef.current.src = audioUrl;
-      audioRef.current.currentTime = room.currentTime || 0;
-      audioRef.current.load(); // important if the same src is reused
+  // When current song changes
+  useEffect(() => {
+    if (room?.currentSong && audioRef.current) {
+      const audioUrl = audioCache.get(room.currentSong.id);
+      if (audioUrl) {
+        audioRef.current.src = audioUrl;
+        audioRef.current.currentTime = room.currentTime || 0;
+        audioRef.current.load();
 
-      if (room.isPlaying) {
-        audioRef.current.play().catch(error => {
-          console.error('Autoplay failed:', error);
-          // Retry on user interaction
-          const playAudio = () => {
-            audioRef.current?.play().catch(console.error);
-            document.removeEventListener('click', playAudio);
-          };
-          document.addEventListener('click', playAudio);
-        });
+        if (room.isPlaying) {
+          audioRef.current.play().catch(error => {
+            console.error('Autoplay failed:', error);
+          });
+        }
       }
     }
-  }
-}, [room?.currentSong, audioFiles, room?.currentTime]);
+  }, [room?.currentSong, audioCache, room?.currentTime]);
 
-// Sync play/pause state
-useEffect(() => {
-  if (audioRef.current && room?.currentSong) {
-    const audioUrl = audioFiles.get(room.currentSong.id);
-    if (audioUrl) {
-      if (room.isPlaying) {
-        audioRef.current.play().catch(error => {
-          console.error('Playback error:', error);
-        });
-      } else {
-        audioRef.current.pause();
+  // Sync play/pause state
+  useEffect(() => {
+    if (audioRef.current && room?.currentSong) {
+      const audioUrl = audioCache.get(room.currentSong.id);
+      if (audioUrl) {
+        if (room.isPlaying) {
+          audioRef.current.play().catch(error => {
+            console.error('Playback error:', error);
+          });
+        } else {
+          audioRef.current.pause();
+        }
       }
     }
-  }
-}, [room?.isPlaying, audioFiles]);
-
+  }, [room?.isPlaying, audioCache]);
 
   const createRoom = () => {
     if (socket && username.trim()) {
@@ -290,34 +312,52 @@ useEffect(() => {
     }
   };
 
-  const addSong = () => {
+  const addSong = async () => {
     if (socket && songTitle.trim() && selectedFile) {
-      // Create a URL for the audio file
-      const audioUrl = URL.createObjectURL(selectedFile);
-      
-      // Get duration from audio file
-      const audio = new Audio(audioUrl);
-      audio.addEventListener('loadedmetadata', () => {
-        const duration = `${Math.floor(audio.duration / 60)}:${Math.floor(audio.duration % 60).toString().padStart(2, '0')}`;
-        const songId = Date.now();
+      try {
+        // Convert file to base64
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const arrayBuffer = e.target?.result as ArrayBuffer;
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const base64String = btoa(String.fromCharCode(...uint8Array));
+          
+          // Create a URL for duration calculation
+          const audioUrl = URL.createObjectURL(selectedFile);
+          const audio = new Audio(audioUrl);
+          
+          audio.addEventListener('loadedmetadata', () => {
+            const duration = `${Math.floor(audio.duration / 60)}:${Math.floor(audio.duration % 60).toString().padStart(2, '0')}`;
+            const songId = Date.now();
+            
+            // Cache the audio URL locally
+            const dataUrl = `data:audio/mpeg;base64,${base64String}`;
+            setAudioCache(prev => new Map(prev).set(songId, dataUrl));
+            
+            socket.emit('add-song', {
+              id: songId,
+              title: songTitle.trim(),
+              artist: songArtist.trim() || 'Unknown Artist',
+              duration: duration,
+              audioData: base64String
+            });
+            
+            // Clean up
+            URL.revokeObjectURL(audioUrl);
+          });
+        };
         
-        // Store the audio URL locally
-        setAudioFiles(prev => new Map(prev).set(songId, audioUrl));
+        reader.readAsArrayBuffer(selectedFile);
         
-        socket.emit('add-song', {
-          id: songId,
-          title: songTitle.trim(),
-          artist: songArtist.trim() || 'Unknown Artist',
-          duration: duration,
-          url: audioUrl // This will be used as identifier
-        });
-      });
-      
-      setSongTitle('');
-      setSongArtist('');
-      setSelectedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        setSongTitle('');
+        setSongArtist('');
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } catch (error) {
+        console.error('Error adding song:', error);
+        alert('Error adding song. Please try again.');
       }
     }
   };
@@ -331,6 +371,20 @@ useEffect(() => {
         isPlaying: newIsPlaying,
         currentTime: currentTime
       });
+    }
+  };
+
+  const stopMusic = () => {
+    if (socket && room?.currentSong) {
+      socket.emit('music-control', {
+        isPlaying: false,
+        currentTime: 0
+      });
+      
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.pause();
+      }
     }
   };
 
@@ -602,6 +656,13 @@ useEffect(() => {
                     >
                       {room.isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
                     </button>
+                    <button
+                      onClick={stopMusic}
+                      disabled={!isConnected}
+                      className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-all transform hover:scale-105 disabled:opacity-50"
+                    >
+                      <Square className="w-4 h-4" />
+                    </button>
                     <Volume2 className="w-5 h-5 text-white/70" />
                   </div>
                   {room.isPlaying && (
@@ -609,6 +670,14 @@ useEffect(() => {
                       <div className="inline-flex items-center gap-2 text-green-400 text-sm">
                         <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
                         Playing
+                      </div>
+                    </div>
+                  )}
+                  {!room.isPlaying && room.currentTime === 0 && (
+                    <div className="text-center">
+                      <div className="inline-flex items-center gap-2 text-red-400 text-sm">
+                        <Square className="w-2 h-2" />
+                        Stopped
                       </div>
                     </div>
                   )}
@@ -697,6 +766,9 @@ useEffect(() => {
                       </div>
                       {room.currentSong?.id === song.id && room.isPlaying && (
                         <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse flex-shrink-0"></div>
+                      )}
+                      {room.currentSong?.id === song.id && !room.isPlaying && room.currentTime === 0 && (
+                        <Square className="w-2 h-2 text-red-400 flex-shrink-0" />
                       )}
                     </div>
                   </div>

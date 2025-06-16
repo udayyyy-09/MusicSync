@@ -320,7 +320,16 @@ function App() {
         reader.onload = async (e) => {
           const arrayBuffer = e.target?.result as ArrayBuffer;
           const uint8Array = new Uint8Array(arrayBuffer);
-          const base64String = btoa(String.fromCharCode(...uint8Array));
+          
+          // Convert uint8Array to binary string in chunks to avoid stack overflow
+          let binaryString = '';
+          const chunkSize = 8192; // Process 8KB at a time
+          for (let i = 0; i < uint8Array.length; i += chunkSize) {
+            const chunk = uint8Array.slice(i, i + chunkSize);
+            binaryString += String.fromCharCode.apply(null, Array.from(chunk));
+          }
+          
+          const base64String = btoa(binaryString);
           
           // Create a URL for duration calculation
           const audioUrl = URL.createObjectURL(selectedFile);

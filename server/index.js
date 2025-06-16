@@ -15,6 +15,8 @@ const server = createServer(app);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
   'https://music-sync.vercel.app',
   'https://musicsync-e6za.onrender.com',
   'https://stirring-cobbler-39d9bd.netlify.app'

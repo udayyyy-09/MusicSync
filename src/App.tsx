@@ -202,7 +202,7 @@ function App() {
         currentTime: data.currentTime
       } : null);
       
-      // Sync audio playback
+      // Sync audio playback for all users
       if (audioRef.current && room?.currentSong) {
         const audioUrl = audioCache.get(room.currentSong.id);
         if (audioUrl) {
@@ -219,13 +219,13 @@ function App() {
     return () => {
       newSocket.close();
     };
-  }, []);
+  }, [audioCache, room?.currentSong]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [room?.messages]);
 
-  // When current song changes
+  // When current song changes, load it for all users
   useEffect(() => {
     if (room?.currentSong && audioRef.current) {
       const audioUrl = audioCache.get(room.currentSong.id);
@@ -241,9 +241,9 @@ function App() {
         }
       }
     }
-  }, [room?.currentSong, audioCache, room?.currentTime]);
+  }, [room?.currentSong, audioCache]);
 
-  // Sync play/pause state
+  // Sync play/pause state for all users
   useEffect(() => {
     if (audioRef.current && room?.currentSong) {
       const audioUrl = audioCache.get(room.currentSong.id);
@@ -257,7 +257,7 @@ function App() {
         }
       }
     }
-  }, [room?.isPlaying, audioCache]);
+  }, [room?.isPlaying, audioCache, room?.currentSong]);
 
   const createRoom = () => {
     if (socket && username.trim()) {
@@ -673,10 +673,18 @@ function App() {
                       </div>
                     </div>
                   )}
+                  {!room.isPlaying && room.currentTime > 0 && (
+                    <div className="text-center">
+                      <div className="inline-flex items-center gap-2 text-yellow-400 text-sm">
+                        <Pause className="w-3 h-3" />
+                        Paused
+                      </div>
+                    </div>
+                  )}
                   {!room.isPlaying && room.currentTime === 0 && (
                     <div className="text-center">
                       <div className="inline-flex items-center gap-2 text-red-400 text-sm">
-                        <Square className="w-2 h-2" />
+                        <Square className="w-3 h-3" />
                         Stopped
                       </div>
                     </div>
@@ -767,8 +775,11 @@ function App() {
                       {room.currentSong?.id === song.id && room.isPlaying && (
                         <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse flex-shrink-0"></div>
                       )}
+                      {room.currentSong?.id === song.id && !room.isPlaying && room.currentTime > 0 && (
+                        <Pause className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+                      )}
                       {room.currentSong?.id === song.id && !room.isPlaying && room.currentTime === 0 && (
-                        <Square className="w-2 h-2 text-red-400 flex-shrink-0" />
+                        <Square className="w-3 h-3 text-red-400 flex-shrink-0" />
                       )}
                     </div>
                   </div>
